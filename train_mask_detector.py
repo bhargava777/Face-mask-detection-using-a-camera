@@ -1,5 +1,12 @@
 # import the necessary packages
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.preprocessing.picture import pic_to_array
+from tensorflow.keras.preprocessing.picture import load_pic
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.layers import AveragePooling2D
 from tensorflow.keras.layers import Dropout
@@ -8,130 +15,105 @@ from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import Input
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.preprocessing.image import img_to_array
-from tensorflow.keras.preprocessing.image import load_img
-from tensorflow.keras.utils import to_categorical
-from sklearn.preprocessing import LabelBinarizer
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-from imutils import paths
+from imutils import files
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-# initialize the initial learning rate, number of epochs to train for,
+# initialize the initial learning rate, number of TRAINING_EPOCHS to train for,
 # and batch size
-INIT_LR = 1e-4
-EPOCHS = 20
-BS = 32
+LEARNING_RATE = 1e-4
+TRAINING_EPOCHS = 20
+BATCH_SIZE = 32
 
-DIRECTORY = r"/Users/vinaykumar/Downloads/Face-Mask-Detection/dataset"
-CATEGORIES = ["with_mask", "without_mask"]
+DIR = r"/Users/vinaykumar/Downloads/Face-Mask-Detection/infoset"
+TYPES = ["with_mask", "without_mask"]
 
-# grab the list of images in our dataset directory, then initialize
-# the list of data (i.e., images) and class images
-print("[INFO] loading images...")
+# grab the list of pictures in our infoset DIR, then initialize
+# the list of info (i.e., pictures) and class pictures
+features = []
+info = []
 
-data = []
-labels = []
 
-for category in CATEGORIES:
-    path = os.path.join(DIRECTORY, category)
-    for img in os.listdir(path):
-    	img_path = os.path.join(path, img)
-    	image = load_img(img_path, target_size=(224, 224))
-    	image = img_to_array(image)
-    	image = preprocess_input(image)
+for index in TYPES:
+    file = os.file.join(DIR, index)
+    for pic in os.listdir(file):
+    	pic_file = os.file.join(file, pic)
+    	picture = load_pic(pic_file, target_size=(224, 224))
+    	picture = pic_to_array(picture)
+    	picture = preprocess_input(picture)
 
-    	data.append(image)
-    	labels.append(category)
+    	info.append(picture)
+    	features.append(index)
 
-# perform one-hot encoding on the labels
+# perform one-hot encoding on the features
+
 lb = LabelBinarizer()
-labels = lb.fit_transform(labels)
-labels = to_categorical(labels)
+features = lb.fit_transform(features)
+features = to_categorical(features)
 
-data = np.array(data, dtype="float32")
-labels = np.array(labels)
+info = np.array(info, dtype="float32")
+features = np.array(features)
+# construct the training picture generator for info pic_augmentationmentation
+pic_augmentation = ImageDataGenerator(rotation_range=25,zoom_range=0.30,width_shift_range=0.4,height_shift_range=0.3,shear_range=0.20,horizontal_flip=True,fill_mode="nearest",zca_whitening=False,channel_shift_range=0.0)
 
-(trainX, testX, trainY, testY) = train_test_split(data, labels,
-	test_size=0.20, stratify=labels, random_state=42)
 
-# construct the training image generator for data augmentation
-aug = ImageDataGenerator(
-	rotation_range=20,
-	zoom_range=0.15,
-	width_shift_range=0.2,
-	height_shift_range=0.2,
-	shear_range=0.15,
-	horizontal_flip=True,
-	fill_mode="nearest")
+(trainX, testX, trainY, testY) = train_test_split(info, features,test_size=0.20, stratify=features, random_state=42)
+
 
 # load the MobileNetV2 network, ensuring the head FC layer sets are
 # left off
-baseModel = MobileNetV2(weights="imagenet", include_top=False,
-	input_tensor=Input(shape=(224, 224, 3)))
+bottom_basic_layer = MobileNetV2(weights="picturenet", include_top=False,input_tensor=Input(shape=(224, 224, 3)))
 
 # construct the head of the model that will be placed on top of the
 # the base model
-headModel = baseModel.output
-headModel = AveragePooling2D(pool_size=(7, 7))(headModel)
-headModel = Flatten(name="flatten")(headModel)
-headModel = Dense(128, activation="relu")(headModel)
-headModel = Dropout(0.5)(headModel)
-headModel = Dense(2, activation="softmax")(headModel)
+additional_layers = bottom_basic_layer.output
+additional_layers = Conv2D(200, (3, 3), input_shape = data.shape[1:])(additional_layers)
+additional_layers = Activation('relu')(additional_layers)
+additional_layers = AveragePooling2D(pool_size=(7, 7))(additional_layers)
+additional_layers = Conv2D(100, (3, 3), input_shape = data.shape[1:])(additional_layers)
+additional_layers = Activation('relu')(additional_layers)
+additional_layers = MaxPooling2D(pool_size=(7, 7))(additional_layers)
+additional_layers = Flatten(name="flatten")(additional_layers)
+additional_layers = Dense(128, activation="relu")(additional_layers)
+additional_layers = Dropout(0.5)(additional_layers)
+additional_layers = Dense(2, activation="softmax")(additional_layers)
 
 # place the head FC model on top of the base model (this will become
 # the actual model we will train)
-model = Model(inputs=baseModel.input, outputs=headModel)
+model = Model(inputs=bottom_basic_layer.input, outputs=additional_layers)
+
+
 
 # loop over all layers in the base model and freeze them so they will
 # *not* be updated during the first training process
-for layer in baseModel.layers:
+for layer in bottom_basic_layer.layers:
 	layer.trainable = False
 
-# compile our model
-print("[INFO] compiling model...")
-opt = Adam(lr=INIT_LR, decay=INIT_LR / EPOCHS)
-model.compile(loss="binary_crossentropy", optimizer=opt,
+
+opt = Adam(lr=LEARNING_RATE, decay=LEARNING_RATE / TRAINING_EPOCHS)
+model.compile(loss="categorical_crossentropy", optimizer=opt,
 	metrics=["accuracy"])
 
-# train the head of the network
-print("[INFO] training head...")
+
 H = model.fit(
-	aug.flow(trainX, trainY, batch_size=BS),
-	steps_per_epoch=len(trainX) // BS,
-	validation_data=(testX, testY),
-	validation_steps=len(testX) // BS,
-	epochs=EPOCHS)
+	pic_augmentation.flow(trainX, trainY, batch_size=BATCH_SIZE),
+	steps_per_epoch=len(trainX) // BATCH_SIZE,
+	validation_info=(testX, testY),
+	validation_steps=len(testX) // BATCH_SIZE,
+	epochs=TRAINING_EPOCHS)
 
 # make predictions on the testing set
 print("[INFO] evaluating network...")
-predIdxs = model.predict(testX, batch_size=BS)
+predictions = model.predict(testX, batch_size=BATCH_SIZE)
 
-# for each image in the testing set we need to find the index of the
+# for each picture in the testing set we need to find the index of the
 # label with corresponding largest predicted probability
-predIdxs = np.argmax(predIdxs, axis=1)
+predictions = np.argmax(predictions, axis=1)
 
 # show a nicely formatted classification report
-print(classification_report(testY.argmax(axis=1), predIdxs,
+print(classification_report(testY.argmax(axis=1), predictions,
 	target_names=lb.classes_))
 
 # serialize the model to disk
-print("[INFO] saving mask detector model...")
-model.save("mask_detector.model", save_format="h5")
-
-# plot the training loss and accuracy
-N = EPOCHS
-plt.style.use("ggplot")
-plt.figure()
-plt.plot(np.arange(0, N), H.history["loss"], label="train_loss")
-plt.plot(np.arange(0, N), H.history["val_loss"], label="val_loss")
-plt.plot(np.arange(0, N), H.history["accuracy"], label="train_acc")
-plt.plot(np.arange(0, N), H.history["val_accuracy"], label="val_acc")
-plt.title("Training Loss and Accuracy")
-plt.xlabel("Epoch #")
-plt.ylabel("Loss/Accuracy")
-plt.legend(loc="lower left")
-plt.savefig("plot.png")
+model.save("face_mask.model", save_format="h5")
